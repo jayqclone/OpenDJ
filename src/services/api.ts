@@ -1,27 +1,23 @@
 import axios from 'axios';
 import { getAccessToken } from '../utils/spotifyAuth';
 import { Track, Playlist, ApiError } from '../types';
+import { generatePlaylistWithAI } from './openai';
 
 // API base URL - would come from environment in real app
 const API_BASE_URL = 'https://api.example.com'; // Replace with actual API URL
-const SPOTIFY_CLIENT_ID = 'your-client-id'; // Replace with actual client ID
+const SPOTIFY_CLIENT_ID = import.meta.env.VITE_SPOTIFY_CLIENT_ID;
 
-// Mock function for playlist generation (would call backend in real implementation)
+// Generate playlist using OpenAI
 export const generatePlaylist = async (prompt: string): Promise<Playlist> => {
   try {
-    // In a real app, this would be an API call
-    // const response = await axios.post(`${API_BASE_URL}/generate-playlist`, { prompt });
-    // return response.data;
-    
-    // Mocked response for demo
-    await new Promise(resolve => setTimeout(resolve, 2000)); // Simulate API delay
+    const aiResponse = await generatePlaylistWithAI(prompt);
     
     return {
       id: `playlist-${Date.now()}`,
-      title: prompt.length > 30 ? `${prompt.substring(0, 30)}...` : prompt,
-      description: `A playlist based on: ${prompt}`,
+      title: aiResponse.title,
+      description: aiResponse.description,
       prompt,
-      tracks: generateMockTracks(10),
+      tracks: aiResponse.tracks,
     };
   } catch (error) {
     console.error('Failed to generate playlist:', error);
@@ -29,25 +25,17 @@ export const generatePlaylist = async (prompt: string): Promise<Playlist> => {
   }
 };
 
-// Mock function for playlist refinement
+// Refine playlist using OpenAI
 export const refinePlaylist = async (playlistId: string, refinementPrompt: string): Promise<Playlist> => {
   try {
-    // In a real app, this would be an API call
-    // const response = await axios.post(`${API_BASE_URL}/refine-playlist`, { 
-    //   playlistId, 
-    //   refinementPrompt 
-    // });
-    // return response.data;
-    
-    // Mocked response for demo
-    await new Promise(resolve => setTimeout(resolve, 1500)); // Simulate API delay
+    const aiResponse = await generatePlaylistWithAI(refinementPrompt);
     
     return {
       id: `playlist-${Date.now()}`,
-      title: `Refined: ${refinementPrompt.substring(0, 20)}...`,
-      description: `A refined playlist based on: ${refinementPrompt}`,
+      title: aiResponse.title,
+      description: aiResponse.description,
       prompt: refinementPrompt,
-      tracks: generateMockTracks(8),
+      tracks: aiResponse.tracks,
     };
   } catch (error) {
     console.error('Failed to refine playlist:', error);
