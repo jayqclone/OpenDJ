@@ -1,17 +1,16 @@
 import axios from 'axios';
 import { getAccessToken } from '../utils/spotifyAuth';
 import { Track, Playlist, ApiError } from '../types';
-import { generatePlaylistWithAI } from './openai';
+import { generatePlaylistWithBackend } from './playlistApi';
 
 // API base URL - would come from environment in real app
 const API_BASE_URL = 'https://api.example.com'; // Replace with actual API URL
 const SPOTIFY_CLIENT_ID = import.meta.env.VITE_SPOTIFY_CLIENT_ID;
 
-// Generate playlist using OpenAI
+// Generate playlist using backend
 export const generatePlaylist = async (prompt: string): Promise<Playlist> => {
   try {
-    const aiResponse = await generatePlaylistWithAI(prompt);
-    
+    const aiResponse = await generatePlaylistWithBackend(prompt);
     return {
       id: `playlist-${Date.now()}`,
       title: aiResponse.title,
@@ -25,11 +24,10 @@ export const generatePlaylist = async (prompt: string): Promise<Playlist> => {
   }
 };
 
-// Refine playlist using OpenAI
+// Refine playlist using backend
 export const refinePlaylist = async (playlistId: string, refinementPrompt: string): Promise<Playlist> => {
   try {
-    const aiResponse = await generatePlaylistWithAI(refinementPrompt);
-    
+    const aiResponse = await generatePlaylistWithBackend(refinementPrompt);
     return {
       id: `playlist-${Date.now()}`,
       title: aiResponse.title,

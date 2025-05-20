@@ -1,3 +1,6 @@
+// This file is now unused. All OpenAI calls are routed through the backend for security and quota reasons.
+// You may safely delete this file if you are only using the backend.
+
 import OpenAI from 'openai';
 import { Track } from '../types';
 
@@ -44,6 +47,8 @@ export const generatePlaylistWithAI = async (prompt: string): Promise<{
   tracks: Track[];
 }> => {
   try {
+    console.log('[OpenAI] Generating playlist with prompt:', prompt);
+    console.log('[OpenAI] API key present:', !!apiKey);
     const completion = await openai.chat.completions.create({
       model: "gpt-3.5-turbo",
       messages: [
@@ -52,7 +57,7 @@ export const generatePlaylistWithAI = async (prompt: string): Promise<{
       ],
       response_format: { type: "json_object" }
     });
-
+    console.log('[OpenAI] Completion response:', completion);
     const response = JSON.parse(completion.choices[0].message.content || '{}');
     
     // Transform the response into our Track type
@@ -74,8 +79,13 @@ export const generatePlaylistWithAI = async (prompt: string): Promise<{
       description: response.description,
       tracks
     };
-  } catch (error) {
-    console.error('OpenAI API error:', error);
+  } catch (error: any) {
+    console.error('[OpenAI] API error:', error);
+    if (error?.response) {
+      console.error('[OpenAI] Error response data:', error.response.data);
+      console.error('[OpenAI] Error response status:', error.response.status);
+      console.error('[OpenAI] Error response headers:', error.response.headers);
+    }
     throw new Error('Failed to generate playlist with AI. Please try again.');
   }
 }; 
