@@ -6,10 +6,10 @@ import {
   clearAuthData, 
   getSpotifyAuthUrl 
 } from '../utils/spotifyAuth';
-import { exchangeCodeForToken } from '../services/api';
+import { exchangeCodeForToken } from '../services/spotify';
 
 // Spotify auth constants
-const SPOTIFY_CLIENT_ID = 'your-client-id'; // Replace with actual client ID
+const SPOTIFY_CLIENT_ID = import.meta.env.VITE_SPOTIFY_CLIENT_ID;
 const REDIRECT_URI = `${window.location.origin}/callback`;
 
 export const useAuth = () => {
@@ -33,6 +33,12 @@ export const useAuth = () => {
 
   // Handle login with Spotify
   const login = useCallback(async () => {
+    if (!SPOTIFY_CLIENT_ID) {
+      console.error('Spotify Client ID not configured');
+      setIsLoading(false);
+      return;
+    }
+
     try {
       const authUrl = await getSpotifyAuthUrl(SPOTIFY_CLIENT_ID, REDIRECT_URI);
       window.location.href = authUrl;
@@ -56,10 +62,6 @@ export const useAuth = () => {
       const data = await exchangeCodeForToken(code, REDIRECT_URI, codeVerifier);
       
       if (data.access_token) {
-        // Store the token and update auth state
-        localStorage.setItem('spotify_access_token', data.access_token);
-        localStorage.setItem('spotify_token_expires_at', (Date.now() + data.expires_in * 1000).toString());
-        
         setIsAuthenticated(true);
         setIsLoading(false);
         navigate('/');
