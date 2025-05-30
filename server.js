@@ -206,11 +206,13 @@ app.post('/api/generate-playlist', async (req, res) => {
     const originalCount = response.tracks.length;
     const removedCount = originalCount - validatedTracks.length;
     
-    if (removedCount > 0 && validatedTracks.length < Math.max(6, originalCount * 0.6)) {
-      console.log(`[OpenAI] Too many tracks removed (${removedCount}/${originalCount}), attempting backfill...`);
+    // More aggressive backfill - trigger if we removed any tracks and ended up with fewer than 75% of original
+    if (removedCount > 0 && validatedTracks.length < Math.max(8, originalCount * 0.75)) {
+      console.log(`[OpenAI] ${removedCount} tracks removed (${validatedTracks.length}/${originalCount} remaining), attempting backfill...`);
       
       try {
-        const backfillPrompt = `${prompt}\n\nIMPORTANT: The previous response included ${removedCount} invalid tracks. Please generate ${removedCount} additional tracks that strictly follow the criteria. Avoid any tracks by the excluded artist(s).`;
+        const tracksNeeded = originalCount - validatedTracks.length;
+        const backfillPrompt = `${prompt}\n\nIMPORTANT: Generate exactly ${tracksNeeded} additional REAL tracks that exist on Spotify and strictly follow the criteria. The previous response included invalid tracks that were removed. Avoid any tracks by excluded artists.`;
         
         const backfillCompletion = await openai.chat.completions.create({
           model: 'gpt-3.5-turbo',
@@ -219,7 +221,7 @@ app.post('/api/generate-playlist', async (req, res) => {
             { role: 'user', content: backfillPrompt },
           ],
           response_format: { type: 'json_object' },
-          max_tokens: 1000,
+          max_tokens: 1500,
         });
         
         const backfillResponse = JSON.parse(backfillCompletion.choices[0].message.content || '{}');
@@ -227,9 +229,12 @@ app.post('/api/generate-playlist', async (req, res) => {
         
         console.log(`[OpenAI] Backfill generated ${backfillTracks.length} additional valid tracks`);
         validatedTracks = [...validatedTracks, ...backfillTracks];
+        console.log(`[OpenAI] Final playlist has ${validatedTracks.length} tracks`);
       } catch (backfillError) {
         console.warn('[OpenAI] Backfill request failed:', backfillError.message);
       }
+    } else if (removedCount > 0) {
+      console.log(`[OpenAI] ${removedCount} tracks removed, but ${validatedTracks.length} tracks remaining is sufficient`);
     }
     
     res.json({
