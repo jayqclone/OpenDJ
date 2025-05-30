@@ -114,35 +114,74 @@ export const searchTrack = async (artist: string, title: string, retryCount = 0)
   }
 
   try {
-    // Improve search query for better results
-    const cleanArtist = artist.replace(/[^\w\s]/gi, '').trim();
-    const cleanTitle = title.replace(/[^\w\s]/gi, '').trim();
-    const query = `artist:"${cleanArtist}" track:"${cleanTitle}"`;
-    
-    console.log(`[Spotify] Searching for: ${query}`);
-    
-    const response = await axios.get(`${SPOTIFY_API_BASE}/search`, {
-      headers: {
-        'Authorization': `Bearer ${token}`
+    // Try multiple search strategies for better success rate
+    const searchStrategies = [
+      // Strategy 1: Exact quoted search (most precise)
+      () => {
+        const cleanArtist = artist.replace(/[^\w\s]/gi, '').trim();
+        const cleanTitle = title.replace(/[^\w\s]/gi, '').trim();
+        return `artist:"${cleanArtist}" track:"${cleanTitle}"`;
       },
-      params: {
-        q: query,
-        type: 'track',
-        limit: 5, // Get more results for better matching
-        market: 'US' // Add market for better availability
+      // Strategy 2: Combined search without quotes (more flexible)
+      () => {
+        const cleanArtist = artist.replace(/[^\w\s]/gi, '').trim();
+        const cleanTitle = title.replace(/[^\w\s]/gi, '').trim();
+        return `${cleanArtist} ${cleanTitle}`;
+      },
+      // Strategy 3: Title-only search (for hard-to-find tracks)
+      () => {
+        const cleanTitle = title.replace(/[^\w\s]/gi, '').trim();
+        return `"${cleanTitle}"`;
+      },
+      // Strategy 4: Artist-only search + manual title matching
+      () => {
+        const cleanArtist = artist.replace(/[^\w\s]/gi, '').trim();
+        return `artist:"${cleanArtist}"`;
       }
-    });
-    
-    const tracks = response.data.tracks.items;
-    
-    if (tracks.length > 0) {
-      console.log(`[Spotify] Found ${tracks.length} tracks for "${artist} - ${title}"`);
-      // Return the best match (first result is usually most relevant)
-      return tracks[0];
-    } else {
-      console.log(`[Spotify] No tracks found for "${artist} - ${title}"`);
-      return null;
+    ];
+
+    for (let strategyIndex = 0; strategyIndex < searchStrategies.length; strategyIndex++) {
+      const query = searchStrategies[strategyIndex]();
+      
+      console.log(`[Spotify] Search strategy ${strategyIndex + 1}: ${query}`);
+      
+      const response = await axios.get(`${SPOTIFY_API_BASE}/search`, {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        },
+        params: {
+          q: query,
+          type: 'track',
+          limit: strategyIndex === 3 ? 50 : 10, // More results for artist-only search
+          market: 'US'
+        }
+      });
+      
+      const tracks = response.data.tracks.items;
+      
+      if (tracks.length > 0) {
+        // For artist-only search, manually find best title match
+        if (strategyIndex === 3) {
+          const titleWords = title.toLowerCase().split(/\s+/);
+          const bestMatch = tracks.find((track: any) => {
+            const trackTitle = track.name.toLowerCase();
+            return titleWords.some(word => trackTitle.includes(word)) ||
+                   trackTitle.includes(title.toLowerCase());
+          });
+          
+          if (bestMatch) {
+            console.log(`[Spotify] Found match via artist search: "${artist} - ${title}" → "${bestMatch.artists[0]?.name} - ${bestMatch.name}"`);
+            return bestMatch;
+          }
+        } else {
+          console.log(`[Spotify] Found ${tracks.length} tracks for "${artist} - ${title}" (strategy ${strategyIndex + 1})`);
+          return tracks[0]; // Return best match
+        }
+      }
     }
+    
+    console.log(`[Spotify] No tracks found for "${artist} - ${title}" after trying all search strategies`);
+    return null;
   } catch (error: any) {
     if (error.response?.status === 429 && retryCount < 2) {
       // Handle rate limiting with exponential backoff
