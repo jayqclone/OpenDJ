@@ -5,6 +5,47 @@ import { getAccessToken, storeAccessToken, removeCodeVerifier } from '../utils/s
 const SPOTIFY_API_BASE = 'https://api.spotify.com/v1';
 const SPOTIFY_CLIENT_ID = import.meta.env.VITE_SPOTIFY_CLIENT_ID;
 
+// Enhanced error handling for Spotify API
+class SpotifyAPIError extends Error {
+  constructor(message: string, public status?: number, public error?: any) {
+    super(message);
+    this.name = 'SpotifyAPIError';
+  }
+}
+
+// Helper function to handle API errors
+const handleSpotifyError = (error: any, context: string) => {
+  console.error(`[Spotify] ${context} failed:`, error);
+  
+  if (error.response) {
+    const status = error.response.status;
+    const data = error.response.data;
+    
+    switch (status) {
+      case 401:
+        console.error('[Spotify] Authentication failed - token may be expired');
+        throw new SpotifyAPIError('Authentication failed. Please log in to Spotify again.', 401, data);
+      case 403:
+        console.error('[Spotify] Forbidden - insufficient permissions');
+        throw new SpotifyAPIError('Insufficient permissions. Please check your Spotify app settings.', 403, data);
+      case 429:
+        console.error('[Spotify] Rate limit exceeded');
+        throw new SpotifyAPIError('Too many requests. Please try again later.', 429, data);
+      case 404:
+        console.error('[Spotify] Resource not found');
+        throw new SpotifyAPIError('Resource not found.', 404, data);
+      default:
+        throw new SpotifyAPIError(`Spotify API error: ${data?.error?.message || 'Unknown error'}`, status, data);
+    }
+  } else if (error.request) {
+    console.error('[Spotify] Network error:', error.message);
+    throw new SpotifyAPIError('Network error. Please check your connection.');
+  } else {
+    console.error('[Spotify] Unexpected error:', error.message);
+    throw new SpotifyAPIError('An unexpected error occurred.');
+  }
+};
+
 // Exchange authorization code for access token
 export const exchangeCodeForToken = async (
   code: string, 
@@ -35,38 +76,51 @@ export const exchangeCodeForToken = async (
     // Clean up the code verifier
     removeCodeVerifier();
     
+    console.log('[Spotify] Token exchange successful');
     return data;
   } catch (error: any) {
-    console.error('Failed to exchange code for token:', error);
-    throw new Error('Failed to complete authentication. Please try again.');
+    handleSpotifyError(error, 'Token exchange');
+    throw error; // This won't be reached due to handleSpotifyError throwing
   }
 };
 
 // Get current user's profile
 export const getCurrentUser = async () => {
   const token = getAccessToken();
-  if (!token) throw new Error('No access token available');
+  if (!token) {
+    throw new SpotifyAPIError('No access token available. Please log in to Spotify.');
+  }
 
   try {
+    console.log('[Spotify] Fetching current user profile');
     const response = await axios.get(`${SPOTIFY_API_BASE}/me`, {
       headers: {
         'Authorization': `Bearer ${token}`
       }
     });
+    console.log('[Spotify] User profile retrieved successfully');
     return response.data;
   } catch (error: any) {
-    console.error('Failed to get current user:', error);
-    throw new Error('Failed to get user profile');
+    handleSpotifyError(error, 'Get current user');
+    throw error;
   }
 };
 
-// Search for a track on Spotify
-export const searchTrack = async (artist: string, title: string): Promise<any> => {
+// Search for a track on Spotify with retry logic
+export const searchTrack = async (artist: string, title: string, retryCount = 0): Promise<any> => {
   const token = getAccessToken();
-  if (!token) throw new Error('No access token available');
+  if (!token) {
+    throw new SpotifyAPIError('No access token available. Please log in to Spotify.');
+  }
 
   try {
-    const query = `artist:"${artist}" track:"${title}"`;
+    // Improve search query for better results
+    const cleanArtist = artist.replace(/[^\w\s]/gi, '').trim();
+    const cleanTitle = title.replace(/[^\w\s]/gi, '').trim();
+    const query = `artist:"${cleanArtist}" track:"${cleanTitle}"`;
+    
+    console.log(`[Spotify] Searching for: ${query}`);
+    
     const response = await axios.get(`${SPOTIFY_API_BASE}/search`, {
       headers: {
         'Authorization': `Bearer ${token}`
@@ -74,28 +128,56 @@ export const searchTrack = async (artist: string, title: string): Promise<any> =
       params: {
         q: query,
         type: 'track',
-        limit: 1
+        limit: 5, // Get more results for better matching
+        market: 'US' // Add market for better availability
       }
     });
     
-    return response.data.tracks.items[0] || null;
+    const tracks = response.data.tracks.items;
+    
+    if (tracks.length > 0) {
+      console.log(`[Spotify] Found ${tracks.length} tracks for "${artist} - ${title}"`);
+      // Return the best match (first result is usually most relevant)
+      return tracks[0];
+    } else {
+      console.log(`[Spotify] No tracks found for "${artist} - ${title}"`);
+      return null;
+    }
   } catch (error: any) {
-    console.error(`Failed to search for track: ${artist} - ${title}`, error);
-    return null;
+    if (error.response?.status === 429 && retryCount < 2) {
+      // Handle rate limiting with exponential backoff
+      const waitTime = Math.pow(2, retryCount) * 1000;
+      console.log(`[Spotify] Rate limited, retrying in ${waitTime}ms`);
+      await new Promise(resolve => setTimeout(resolve, waitTime));
+      return searchTrack(artist, title, retryCount + 1);
+    }
+    
+    console.error(`[Spotify] Search failed for "${artist} - ${title}":`, error.message);
+    return null; // Return null instead of throwing to allow playlist creation to continue
   }
 };
 
 // Search for multiple tracks and return Spotify track data
 export const searchTracks = async (tracks: Track[]): Promise<Track[]> => {
   const token = getAccessToken();
-  if (!token) throw new Error('No access token available');
+  if (!token) {
+    throw new SpotifyAPIError('No access token available. Please log in to Spotify.');
+  }
 
-  const enhancedTracks = await Promise.all(
-    tracks.map(async (track) => {
+  console.log(`[Spotify] Searching for ${tracks.length} tracks on Spotify`);
+  
+  const enhancedTracks = await Promise.allSettled(
+    tracks.map(async (track, index) => {
       try {
+        // Add small delay between requests to avoid rate limiting
+        if (index > 0) {
+          await new Promise(resolve => setTimeout(resolve, 100));
+        }
+        
         const spotifyTrack = await searchTrack(track.artist, track.title);
         
         if (spotifyTrack) {
+          console.log(`[Spotify] Found match for: ${track.artist} - ${track.title}`);
           return {
             ...track,
             spotifyUri: spotifyTrack.uri,
@@ -104,15 +186,24 @@ export const searchTracks = async (tracks: Track[]): Promise<Track[]> => {
           };
         }
         
+        console.log(`[Spotify] No match found for: ${track.artist} - ${track.title}`);
         return track;
       } catch (error) {
-        console.error(`Failed to enhance track: ${track.artist} - ${track.title}`, error);
+        console.error(`[Spotify] Failed to enhance track: ${track.artist} - ${track.title}`, error);
         return track;
       }
     })
   );
 
-  return enhancedTracks;
+  // Extract successful results
+  const results = enhancedTracks
+    .filter((result): result is PromiseFulfilledResult<Track> => result.status === 'fulfilled')
+    .map(result => result.value);
+
+  const foundCount = results.filter(track => track.spotifyUri).length;
+  console.log(`[Spotify] Successfully found ${foundCount}/${tracks.length} tracks on Spotify`);
+
+  return results;
 };
 
 // Create a new playlist
@@ -122,18 +213,22 @@ export const createPlaylist = async (
   isPublic: boolean = false
 ): Promise<any> => {
   const token = getAccessToken();
-  if (!token) throw new Error('No access token available');
+  if (!token) {
+    throw new SpotifyAPIError('No access token available. Please log in to Spotify.');
+  }
 
   try {
+    console.log(`[Spotify] Creating playlist: "${name}"`);
+    
     // First get the current user
     const user = await getCurrentUser();
     
-    // Create the playlist
+    // Create the playlist with better error handling
     const response = await axios.post(
       `${SPOTIFY_API_BASE}/users/${user.id}/playlists`,
       {
-        name,
-        description,
+        name: name.substring(0, 100), // Spotify has a 100 character limit
+        description: description.substring(0, 300), // Spotify has a 300 character limit
         public: isPublic
       },
       {
@@ -144,10 +239,11 @@ export const createPlaylist = async (
       }
     );
     
+    console.log(`[Spotify] Playlist created successfully: ${response.data.name}`);
     return response.data;
   } catch (error: any) {
-    console.error('Failed to create playlist:', error);
-    throw new Error('Failed to create playlist on Spotify');
+    handleSpotifyError(error, 'Create playlist');
+    throw error;
   }
 };
 
@@ -157,31 +253,49 @@ export const addTracksToPlaylist = async (
   trackUris: string[]
 ): Promise<void> => {
   const token = getAccessToken();
-  if (!token) throw new Error('No access token available');
+  if (!token) {
+    throw new SpotifyAPIError('No access token available. Please log in to Spotify.');
+  }
 
   try {
     // Filter out any undefined URIs
-    const validUris = trackUris.filter(uri => uri);
+    const validUris = trackUris.filter(uri => uri && uri.startsWith('spotify:track:'));
     
     if (validUris.length === 0) {
-      throw new Error('No valid Spotify track URIs found');
+      console.warn('[Spotify] No valid Spotify track URIs found');
+      return;
     }
 
-    await axios.post(
-      `${SPOTIFY_API_BASE}/playlists/${playlistId}/tracks`,
-      {
-        uris: validUris
-      },
-      {
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json'
+    console.log(`[Spotify] Adding ${validUris.length} tracks to playlist`);
+
+    // Spotify allows max 100 tracks per request
+    const batchSize = 100;
+    for (let i = 0; i < validUris.length; i += batchSize) {
+      const batch = validUris.slice(i, i + batchSize);
+      
+      await axios.post(
+        `${SPOTIFY_API_BASE}/playlists/${playlistId}/tracks`,
+        {
+          uris: batch
+        },
+        {
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json'
+          }
         }
+      );
+
+      // Small delay between batches
+      if (i + batchSize < validUris.length) {
+        await new Promise(resolve => setTimeout(resolve, 200));
       }
-    );
+    }
+
+    console.log(`[Spotify] Successfully added ${validUris.length} tracks to playlist`);
   } catch (error: any) {
-    console.error('Failed to add tracks to playlist:', error);
-    throw new Error('Failed to add tracks to playlist');
+    handleSpotifyError(error, 'Add tracks to playlist');
+    throw error;
   }
 };
 
@@ -192,6 +306,8 @@ export const createSpotifyPlaylist = async (
   description: string = ''
 ): Promise<string> => {
   try {
+    console.log(`[Spotify] Starting playlist creation process for "${name}"`);
+    
     // First, search for Spotify tracks to get URIs
     const enhancedTracks = await searchTracks(tracks);
     
@@ -203,14 +319,16 @@ export const createSpotifyPlaylist = async (
       .filter(track => track.spotifyUri)
       .map(track => track.spotifyUri!);
     
-    // Add tracks to the playlist if any were found
     if (trackUris.length > 0) {
       await addTracksToPlaylist(playlist.id, trackUris);
+      console.log(`[Spotify] Playlist "${name}" created with ${trackUris.length} tracks`);
+    } else {
+      console.warn(`[Spotify] Playlist "${name}" created but no tracks were found on Spotify`);
     }
     
     return playlist.external_urls.spotify;
   } catch (error: any) {
-    console.error('Failed to create Spotify playlist:', error);
-    throw new Error('Failed to create playlist on Spotify');
+    console.error('[Spotify] Failed to create playlist:', error);
+    throw error;
   }
 }; 

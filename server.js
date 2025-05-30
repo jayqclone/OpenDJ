@@ -8,22 +8,33 @@ dotenv.config();
 
 const app = express();
 const port = process.env.PORT || 5000;
+const allowedOrigins = [
+  'http://localhost:5173',
+  'http://127.0.0.1:5173'
+];
 
 app.use(cors({
-  origin: [
-    'http://localhost:5173',
-    'http://127.0.0.1:5173',
-    'http://localhost:5175',
-    'http://127.0.0.1:5175'
-  ],
+  origin: function(origin, callback) {
+    // allow requests with no origin (like mobile apps, curl, etc.)
+    if (!origin) return callback(null, true);
+    if (allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    } else {
+      return callback(new Error('Not allowed by CORS'));
+    }
+  },
   credentials: true
 }));
+
+// Ensure preflight requests are handled
+app.options('*', cors());
+
 app.use(bodyParser.json());
 
 const SYSTEM_PROMPT = `You are a music expert and playlist curator. Your task is to generate a playlist based on the user's prompt.\nFor each song, provide:\n- Title\n- Artist\n- Album\n- Year\n- Duration (in seconds)\n- A brief explanation of why this song fits the prompt\n\nFormat your response as a JSON object with the following structure:\n{\n  "title": "Playlist title",\n  "description": "Playlist description",\n  "tracks": [\n    {\n      "title": "Song title",\n      "artist": "Artist name",\n      "album": "Album name",\n      "year": 2023,\n      "duration": 180,\n      "explanation": "Why this song fits the prompt"\n    }\n  ]\n}`;
 
 const openai = new OpenAI({
-  apiKey: process.env.VITE_OPENAI_API_KEY,
+  apiKey: process.env.OPENAI_API_KEY,
 });
 
 // Mock playlist generator for when OpenAI fails
@@ -85,6 +96,9 @@ app.post('/api/generate-playlist', async (req, res) => {
   }
   
   try {
+    console.log('[OpenAI] Generating playlist with prompt:', prompt);
+    console.log('[OpenAI] API key configured:', !!process.env.OPENAI_API_KEY);
+    
     const completion = await openai.chat.completions.create({
       model: 'gpt-3.5-turbo',
       messages: [
@@ -92,11 +106,30 @@ app.post('/api/generate-playlist', async (req, res) => {
         { role: 'user', content: prompt },
       ],
       response_format: { type: 'json_object' },
+      max_tokens: 2000,
     });
+    
+    console.log('[OpenAI] Request successful');
     const response = JSON.parse(completion.choices[0].message.content || '{}');
     res.json(response);
   } catch (error) {
     console.error('[OpenAI] API error:', error);
+    
+    // Enhanced error handling following OpenAI best practices
+    if (error instanceof OpenAI.APIError) {
+      console.error('[OpenAI] Request ID:', error.request_id);
+      console.error('[OpenAI] Status:', error.status);
+      console.error('[OpenAI] Error name:', error.name);
+      
+      // Handle specific error cases
+      if (error.status === 401) {
+        console.error('[OpenAI] Authentication failed - check API key');
+      } else if (error.status === 429) {
+        console.error('[OpenAI] Rate limit exceeded or quota reached');
+      } else if (error.status === 500) {
+        console.error('[OpenAI] Server error');
+      }
+    }
     
     // If OpenAI fails (quota exceeded, etc.), fall back to mock data
     console.log('[Fallback] Using mock playlist data due to OpenAI error');
@@ -107,4 +140,5 @@ app.post('/api/generate-playlist', async (req, res) => {
 
 app.listen(port, () => {
   console.log(`Server listening on port ${port}`);
+  console.log(`OpenAI API key configured: ${!!process.env.OPENAI_API_KEY}`);
 }); 
