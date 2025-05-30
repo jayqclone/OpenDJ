@@ -63,6 +63,55 @@ const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
 
+// Post-processing validation to ensure tracks meet user criteria
+const validatePlaylistTracks = (tracks, originalPrompt) => {
+  // Extract exclusion criteria from prompt
+  const lowerPrompt = originalPrompt.toLowerCase();
+  const excludedArtists = [];
+  
+  // Look for patterns like "not released under [artist] name" or "but released by other artists"
+  const exclusionPatterns = [
+    /(?:not|but not|except|excluding|avoid).*(?:released under|by|from)\s+([^,\.\!]+?)(?:\s+(?:name|as the artist))/gi,
+    /produced by\s+([^,\.\!]+?).*but.*released by other artists/gi,
+    /no songs released under\s+([^,\.\!]+?)\s+as the artist/gi
+  ];
+  
+  exclusionPatterns.forEach(pattern => {
+    let match;
+    while ((match = pattern.exec(lowerPrompt)) !== null) {
+      const artistName = match[1].trim().replace(/'/g, '');
+      if (artistName && !excludedArtists.includes(artistName)) {
+        excludedArtists.push(artistName);
+        console.log(`[Validation] Detected exclusion: "${artistName}"`);
+      }
+    }
+  });
+  
+  if (excludedArtists.length === 0) {
+    return tracks; // No exclusions detected, return original tracks
+  }
+  
+  // Filter out tracks that violate exclusion criteria
+  const validTracks = tracks.filter(track => {
+    const trackArtist = track.artist.toLowerCase();
+    
+    for (const excludedArtist of excludedArtists) {
+      if (trackArtist.includes(excludedArtist.toLowerCase())) {
+        console.log(`[Validation] Removing track: "${track.title}" by ${track.artist} (violates exclusion of ${excludedArtist})`);
+        return false;
+      }
+    }
+    return true;
+  });
+  
+  const removedCount = tracks.length - validTracks.length;
+  if (removedCount > 0) {
+    console.log(`[Validation] Filtered out ${removedCount} tracks that violated exclusion criteria`);
+  }
+  
+  return validTracks;
+};
+
 // Mock playlist generator for when OpenAI fails
 const generateMockPlaylist = (prompt) => {
   const mockTracks = [
@@ -137,7 +186,43 @@ app.post('/api/generate-playlist', async (req, res) => {
     
     console.log('[OpenAI] Request successful');
     const response = JSON.parse(completion.choices[0].message.content || '{}');
-    res.json(response);
+    let validatedTracks = validatePlaylistTracks(response.tracks, prompt);
+    
+    // If too many tracks were removed, try to backfill with a follow-up request
+    const originalCount = response.tracks.length;
+    const removedCount = originalCount - validatedTracks.length;
+    
+    if (removedCount > 0 && validatedTracks.length < Math.max(6, originalCount * 0.6)) {
+      console.log(`[OpenAI] Too many tracks removed (${removedCount}/${originalCount}), attempting backfill...`);
+      
+      try {
+        const backfillPrompt = `${prompt}\n\nIMPORTANT: The previous response included ${removedCount} invalid tracks. Please generate ${removedCount} additional tracks that strictly follow the criteria. Avoid any tracks by the excluded artist(s).`;
+        
+        const backfillCompletion = await openai.chat.completions.create({
+          model: 'gpt-3.5-turbo',
+          messages: [
+            { role: 'system', content: SYSTEM_PROMPT },
+            { role: 'user', content: backfillPrompt },
+          ],
+          response_format: { type: 'json_object' },
+          max_tokens: 1000,
+        });
+        
+        const backfillResponse = JSON.parse(backfillCompletion.choices[0].message.content || '{}');
+        const backfillTracks = validatePlaylistTracks(backfillResponse.tracks || [], prompt);
+        
+        console.log(`[OpenAI] Backfill generated ${backfillTracks.length} additional valid tracks`);
+        validatedTracks = [...validatedTracks, ...backfillTracks];
+      } catch (backfillError) {
+        console.warn('[OpenAI] Backfill request failed:', backfillError.message);
+      }
+    }
+    
+    res.json({
+      title: response.title,
+      description: response.description,
+      tracks: validatedTracks
+    });
   } catch (error) {
     console.error('[OpenAI] API error:', error);
     
@@ -160,7 +245,12 @@ app.post('/api/generate-playlist', async (req, res) => {
     // If OpenAI fails (quota exceeded, etc.), fall back to mock data
     console.log('[Fallback] Using mock playlist data due to OpenAI error');
     const mockResponse = generateMockPlaylist(prompt);
-    res.json(mockResponse);
+    const validatedMockTracks = validatePlaylistTracks(mockResponse.tracks, prompt);
+    res.json({
+      title: mockResponse.title,
+      description: mockResponse.description,
+      tracks: validatedMockTracks
+    });
   }
 });
 
