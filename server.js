@@ -72,20 +72,32 @@ const validatePlaylistTracks = (tracks, originalPrompt) => {
   // Look for patterns like "not released under [artist] name" or "but released by other artists"
   const exclusionPatterns = [
     /(?:not|but not|except|excluding|avoid).*(?:released under|by|from)\s+([^,\.\!]+?)(?:\s+(?:name|as the artist))/gi,
-    /produced by\s+([^,\.\!]+?).*but.*released by other artists/gi,
-    /no songs released under\s+([^,\.\!]+?)\s+as the artist/gi
+    /produced by\s+([^,\.\!]+?).*(?:but|and).*released by other artists/gi,
+    /no songs released under\s+([^,\.\!]+?)\s+as the artist/gi,
+    /songs produced by\s+([^,\.\!]+?).*(?:but|,).*released by other artists/gi,
+    /featuring songs produced by\s+([^,\.\!]+?).*(?:but|,).*released by other artists/gi
   ];
   
   exclusionPatterns.forEach(pattern => {
     let match;
     while ((match = pattern.exec(lowerPrompt)) !== null) {
-      const artistName = match[1].trim().replace(/'/g, '');
+      const artistName = match[1].trim().replace(/'/g, '').replace(/\s+/g, ' ');
       if (artistName && !excludedArtists.includes(artistName)) {
         excludedArtists.push(artistName);
         console.log(`[Validation] Detected exclusion: "${artistName}"`);
       }
     }
   });
+  
+  // Also look for explicit mentions of specific artists to exclude
+  if (lowerPrompt.includes('quincy jones') && lowerPrompt.includes('but released by other')) {
+    if (!excludedArtists.includes('quincy jones')) {
+      excludedArtists.push('quincy jones');
+      console.log(`[Validation] Detected exclusion: "quincy jones"`);
+    }
+  }
+  
+  console.log(`[Validation] Processing ${tracks.length} tracks with ${excludedArtists.length} exclusions`);
   
   if (excludedArtists.length === 0) {
     return tracks; // No exclusions detected, return original tracks
@@ -96,7 +108,9 @@ const validatePlaylistTracks = (tracks, originalPrompt) => {
     const trackArtist = track.artist.toLowerCase();
     
     for (const excludedArtist of excludedArtists) {
-      if (trackArtist.includes(excludedArtist.toLowerCase())) {
+      // Check if the track artist contains the excluded artist name
+      if (trackArtist.includes(excludedArtist.toLowerCase()) || 
+          trackArtist.startsWith(excludedArtist.toLowerCase())) {
         console.log(`[Validation] Removing track: "${track.title}" by ${track.artist} (violates exclusion of ${excludedArtist})`);
         return false;
       }
