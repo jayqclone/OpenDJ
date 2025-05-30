@@ -8,6 +8,7 @@ export interface Track {
   imageUrl?: string;
   spotifyUri?: string;
   appleMusicUrl?: string;
+  explanation?: string; // Optional explanation from OpenAI
 }
 
 export interface Playlist {

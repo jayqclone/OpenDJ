@@ -178,19 +178,27 @@ export const searchTracks = async (tracks: Track[]): Promise<Track[]> => {
         
         if (spotifyTrack) {
           console.log(`[Spotify] Found match for: ${track.artist} - ${track.title}`);
+          
+          // Use Spotify's metadata instead of OpenAI's for accuracy
           return {
-            ...track,
+            id: spotifyTrack.id,
+            title: spotifyTrack.name, // Use Spotify's exact title
+            artist: spotifyTrack.artists[0]?.name || track.artist, // Use Spotify's artist name
+            album: spotifyTrack.album.name, // Use Spotify's album name
+            year: parseInt(spotifyTrack.album.release_date.substring(0, 4)), // Extract year from release date
+            duration: Math.round(spotifyTrack.duration_ms / 1000), // Convert ms to seconds
+            imageUrl: spotifyTrack.album.images[0]?.url || track.imageUrl, // Use Spotify's album art
             spotifyUri: spotifyTrack.uri,
-            imageUrl: spotifyTrack.album.images[0]?.url || track.imageUrl,
-            id: spotifyTrack.id
+            // Keep OpenAI's explanation if it exists
+            explanation: track.explanation
           };
         }
         
         console.log(`[Spotify] No match found for: ${track.artist} - ${track.title}`);
-        return track;
+        return track; // Fall back to OpenAI data if no Spotify match
       } catch (error) {
         console.error(`[Spotify] Failed to enhance track: ${track.artist} - ${track.title}`, error);
-        return track;
+        return track; // Fall back to OpenAI data on error
       }
     })
   );
