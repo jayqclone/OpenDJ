@@ -25,14 +25,48 @@ export const generatePlaylist = async (prompt: string): Promise<Playlist> => {
       })),
     };
 
-    // If user is authenticated with Spotify, enhance tracks with real album artwork
+    // If user is authenticated with Spotify, enhance tracks and filter out hallucinations
     const token = getAccessToken();
     if (token) {
       try {
-        console.log('[Spotify] User authenticated, enhancing tracks with album artwork...');
+        console.log('[Spotify] User authenticated, enhancing tracks and filtering hallucinations...');
         const enhancedTracks = await searchTracks(playlist.tracks);
-        playlist.tracks = enhancedTracks;
-        console.log('[Spotify] Successfully enhanced tracks with album artwork');
+        
+        // Filter out tracks that Spotify couldn't find (likely hallucinations)
+        const validTracks = enhancedTracks.filter(track => track.spotifyUri);
+        const hallucinatedTracks = enhancedTracks.filter(track => !track.spotifyUri);
+        
+        if (hallucinatedTracks.length > 0) {
+          console.warn(`[Validation] Found ${hallucinatedTracks.length} likely hallucinated tracks:`, 
+            hallucinatedTracks.map(t => `"${t.title}" by ${t.artist}`));
+          
+          // If we lost too many tracks, request replacements
+          if (validTracks.length < Math.max(6, playlist.tracks.length * 0.6)) {
+            console.log('[OpenAI] Too many tracks were hallucinated, requesting replacements...');
+            
+            try {
+              const replacementPrompt = `${prompt}\n\nIMPORTANT: Please generate ${hallucinatedTracks.length} additional REAL tracks that exist on Spotify. Avoid fictional or made-up songs. Only include songs that actually exist and can be found on music platforms.`;
+              
+              const replacementResponse = await generatePlaylistWithBackend(replacementPrompt);
+              const replacementTracks = await searchTracks(replacementResponse.tracks.map((track: any) => ({
+                ...track,
+                id: track.id || `track-${Date.now()}-${Math.random()}`
+              })));
+              
+              // Only add replacements that Spotify can find
+              const validReplacements = replacementTracks.filter(track => track.spotifyUri);
+              validTracks.push(...validReplacements);
+              
+              console.log(`[OpenAI] Added ${validReplacements.length} verified replacement tracks`);
+            } catch (error) {
+              console.warn('[OpenAI] Failed to get replacement tracks:', error);
+            }
+          }
+        }
+        
+        playlist.tracks = validTracks;
+        console.log(`[Spotify] Finalized playlist with ${validTracks.length} verified tracks`);
+        
       } catch (error) {
         console.warn('[Spotify] Failed to enhance tracks with Spotify data:', error);
         // Continue with original tracks if Spotify enhancement fails
@@ -66,14 +100,48 @@ export const refinePlaylist = async (playlistId: string, refinementPrompt: strin
       })),
     };
 
-    // If user is authenticated with Spotify, enhance tracks with real album artwork
+    // If user is authenticated with Spotify, enhance tracks and filter out hallucinations
     const token = getAccessToken();
     if (token) {
       try {
-        console.log('[Spotify] User authenticated, enhancing refined tracks with album artwork...');
+        console.log('[Spotify] User authenticated, enhancing refined tracks and filtering hallucinations...');
         const enhancedTracks = await searchTracks(playlist.tracks);
-        playlist.tracks = enhancedTracks;
-        console.log('[Spotify] Successfully enhanced refined tracks with album artwork');
+        
+        // Filter out tracks that Spotify couldn't find (likely hallucinations)
+        const validTracks = enhancedTracks.filter(track => track.spotifyUri);
+        const hallucinatedTracks = enhancedTracks.filter(track => !track.spotifyUri);
+        
+        if (hallucinatedTracks.length > 0) {
+          console.warn(`[Validation] Found ${hallucinatedTracks.length} likely hallucinated tracks in refined playlist:`, 
+            hallucinatedTracks.map(t => `"${t.title}" by ${t.artist}`));
+          
+          // If we lost too many tracks, request replacements
+          if (validTracks.length < Math.max(6, playlist.tracks.length * 0.6)) {
+            console.log('[OpenAI] Too many refined tracks were hallucinated, requesting replacements...');
+            
+            try {
+              const replacementPrompt = `${refinementPrompt}\n\nIMPORTANT: Please generate ${hallucinatedTracks.length} additional REAL tracks that exist on Spotify. Avoid fictional or made-up songs. Only include songs that actually exist and can be found on music platforms.`;
+              
+              const replacementResponse = await generatePlaylistWithBackend(replacementPrompt);
+              const replacementTracks = await searchTracks(replacementResponse.tracks.map((track: any) => ({
+                ...track,
+                id: track.id || `track-${Date.now()}-${Math.random()}`
+              })));
+              
+              // Only add replacements that Spotify can find
+              const validReplacements = replacementTracks.filter(track => track.spotifyUri);
+              validTracks.push(...validReplacements);
+              
+              console.log(`[OpenAI] Added ${validReplacements.length} verified replacement tracks to refined playlist`);
+            } catch (error) {
+              console.warn('[OpenAI] Failed to get replacement tracks for refined playlist:', error);
+            }
+          }
+        }
+        
+        playlist.tracks = validTracks;
+        console.log(`[Spotify] Finalized refined playlist with ${validTracks.length} verified tracks`);
+        
       } catch (error) {
         console.warn('[Spotify] Failed to enhance refined tracks with Spotify data:', error);
         // Continue with original tracks if Spotify enhancement fails
