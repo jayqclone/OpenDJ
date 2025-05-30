@@ -32,40 +32,70 @@ export const generatePlaylist = async (prompt: string): Promise<Playlist> => {
         console.log('[Spotify] User authenticated, enhancing tracks and filtering hallucinations...');
         const enhancedTracks = await searchTracks(playlist.tracks);
         
-        // Filter out tracks that Spotify couldn't find (likely hallucinations)
-        const validTracks = enhancedTracks.filter(track => track.spotifyUri);
-        const hallucinatedTracks = enhancedTracks.filter(track => !track.spotifyUri);
+        // Be less aggressive with filtering - only remove tracks if we're confident they're hallucinations
+        // Since backend already does validation, we mainly want to catch obvious fake songs
+        const validTracks: Track[] = [];
+        const possibleHallucinations: Track[] = [];
         
-        if (hallucinatedTracks.length > 0) {
-          console.warn(`[Validation] Found ${hallucinatedTracks.length} likely hallucinated tracks:`, 
-            hallucinatedTracks.map(t => `"${t.title}" by ${t.artist}`));
+        enhancedTracks.forEach(track => {
+          if (track.spotifyUri) {
+            // Track found on Spotify - definitely valid
+            validTracks.push(track);
+          } else {
+            // Track not found - but might be real song with search issues
+            possibleHallucinations.push(track);
+          }
+        });
+        
+        // Only filter out tracks if we found SOME tracks on Spotify
+        // If Spotify found nothing, it's likely a search/API issue, not hallucinations
+        if (validTracks.length > 0 && possibleHallucinations.length > 0) {
+          const hallucinationRatio = possibleHallucinations.length / enhancedTracks.length;
           
-          // If we lost too many tracks, request replacements
-          if (validTracks.length < Math.max(6, playlist.tracks.length * 0.6)) {
-            console.log('[OpenAI] Too many tracks were hallucinated, requesting replacements...');
+          if (hallucinationRatio > 0.6) {
+            // If more than 60% not found, likely Spotify API issue - keep all tracks
+            console.warn('[Spotify] High percentage of tracks not found - likely API issue, keeping all tracks');
+            playlist.tracks = enhancedTracks;
+          } else {
+            // Normal case - some tracks found, some not
+            console.warn(`[Validation] Found ${possibleHallucinations.length} tracks not on Spotify:`, 
+              possibleHallucinations.map(t => `"${t.title}" by ${t.artist}`));
+            playlist.tracks = validTracks;
             
-            try {
-              const replacementPrompt = `${prompt}\n\nIMPORTANT: Please generate ${hallucinatedTracks.length} additional REAL tracks that exist on Spotify. Avoid fictional or made-up songs. Only include songs that actually exist and can be found on music platforms.`;
+            // Request replacements if we lost too many tracks
+            if (validTracks.length < Math.max(6, playlist.tracks.length * 0.7)) {
+              console.log('[OpenAI] Too many tracks not found on Spotify, requesting replacements...');
               
-              const replacementResponse = await generatePlaylistWithBackend(replacementPrompt);
-              const replacementTracks = await searchTracks(replacementResponse.tracks.map((track: any) => ({
-                ...track,
-                id: track.id || `track-${Date.now()}-${Math.random()}`
-              })));
-              
-              // Only add replacements that Spotify can find
-              const validReplacements = replacementTracks.filter(track => track.spotifyUri);
-              validTracks.push(...validReplacements);
-              
-              console.log(`[OpenAI] Added ${validReplacements.length} verified replacement tracks`);
-            } catch (error) {
-              console.warn('[OpenAI] Failed to get replacement tracks:', error);
+              try {
+                const replacementPrompt = `${prompt}\n\nIMPORTANT: Please generate ${possibleHallucinations.length} additional REAL tracks that exist on Spotify. Avoid fictional or made-up songs. Only include songs that actually exist and can be found on music platforms.`;
+                
+                const replacementResponse = await generatePlaylistWithBackend(replacementPrompt);
+                const replacementTracks = await searchTracks(replacementResponse.tracks.map((track: any) => ({
+                  ...track,
+                  id: track.id || `track-${Date.now()}-${Math.random()}`
+                })));
+                
+                // Only add replacements that Spotify can find
+                const validReplacements = replacementTracks.filter(track => track.spotifyUri);
+                validTracks.push(...validReplacements);
+                
+                console.log(`[OpenAI] Added ${validReplacements.length} verified replacement tracks`);
+                playlist.tracks = validTracks;
+              } catch (error) {
+                console.warn('[OpenAI] Failed to get replacement tracks:', error);
+              }
             }
           }
+        } else if (validTracks.length === 0) {
+          // No tracks found on Spotify - definitely a search/API issue
+          console.warn('[Spotify] No tracks found on Spotify - likely API issue, keeping original tracks');
+          playlist.tracks = enhancedTracks;
+        } else {
+          // All tracks found on Spotify - perfect!
+          playlist.tracks = validTracks;
         }
         
-        playlist.tracks = validTracks;
-        console.log(`[Spotify] Finalized playlist with ${validTracks.length} verified tracks`);
+        console.log(`[Spotify] Finalized playlist with ${playlist.tracks.length} tracks`);
         
       } catch (error) {
         console.warn('[Spotify] Failed to enhance tracks with Spotify data:', error);
