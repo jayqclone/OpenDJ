@@ -3,6 +3,7 @@ import cors from 'cors';
 import bodyParser from 'body-parser';
 import { OpenAI } from 'openai';
 import dotenv from 'dotenv';
+import axios from 'axios';
 
 dotenv.config();
 
@@ -10,7 +11,9 @@ const app = express();
 const port = process.env.PORT || 5000;
 const allowedOrigins = [
   'http://localhost:5173',
-  'http://127.0.0.1:5173'
+  'http://127.0.0.1:5173',
+  'http://localhost:5175',
+  'http://127.0.0.1:5175'
 ];
 
 app.use(cors({
@@ -42,6 +45,7 @@ Rules:
 3. If the user mentions a producer (e.g., "Produced by Quincy Jones"), verify actual production credits using public music data.
 4. Be factual. Make no assumptions. If uncertain, omit the track.
 5. Use accurate metadata for year, album, artist, and duration.
+6. Default final playlist length should be 15 tracks.
 
 Format your response as valid JSON:
 {
@@ -179,7 +183,8 @@ const generateMockPlaylist = (prompt) => {
 };
 
 app.post('/api/generate-playlist', async (req, res) => {
-  const { prompt } = req.body;
+  const { prompt, token } = req.body;
+  console.log('[API] Received token:', token ? 'present' : 'missing');
   if (!prompt) {
     return res.status(400).json({ error: 'Missing prompt' });
   }
@@ -236,7 +241,37 @@ app.post('/api/generate-playlist', async (req, res) => {
     } else if (removedCount > 0) {
       console.log(`[OpenAI] ${removedCount} tracks removed, but ${validatedTracks.length} tracks remaining is sufficient`);
     }
-    
+
+    // --- Spotify Album Artwork Enhancement ---
+    if (token) {
+      console.log('[Spotify] Enhancing tracks with album artwork using provided token');
+      const enhancedTracks = await Promise.all(validatedTracks.map(async (track) => {
+        try {
+          const query = `artist:${track.artist} track:${track.title}`;
+          console.log(`[Spotify] Searching for: ${query}`);
+          const resp = await axios.get('https://api.spotify.com/v1/search', {
+            headers: { 'Authorization': `Bearer ${token}` },
+            params: { q: query, type: 'track', limit: 1, market: 'US' }
+          });
+          const items = resp.data.tracks.items;
+          console.log(`[Spotify] Results for "${track.artist} - ${track.title}": ${items.length}`);
+          if (items && items.length > 0) {
+            const albumImages = items[0].album.images;
+            const imageUrl = albumImages[0]?.url || null;
+            console.log(`[Spotify] Selected album image for "${track.artist} - ${track.title}": ${imageUrl}`);
+            return { ...track, albumArtUrl: imageUrl };
+          } else {
+            console.log(`[Spotify] No results found for "${track.artist} - ${track.title}"`);
+          }
+        } catch (err) {
+          console.warn(`[Spotify] Failed to fetch artwork for ${track.artist} - ${track.title}:`, err?.response?.data || err.message);
+        }
+        return { ...track, albumArtUrl: null };
+      }));
+      validatedTracks = enhancedTracks;
+    }
+    // --- End Spotify Enhancement ---
+
     res.json({
       title: response.title,
       description: response.description,
@@ -244,13 +279,11 @@ app.post('/api/generate-playlist', async (req, res) => {
     });
   } catch (error) {
     console.error('[OpenAI] API error:', error);
-    
     // Enhanced error handling following OpenAI best practices
     if (error instanceof OpenAI.APIError) {
       console.error('[OpenAI] Request ID:', error.request_id);
       console.error('[OpenAI] Status:', error.status);
       console.error('[OpenAI] Error name:', error.name);
-      
       // Handle specific error cases
       if (error.status === 401) {
         console.error('[OpenAI] Authentication failed - check API key');
@@ -260,11 +293,32 @@ app.post('/api/generate-playlist', async (req, res) => {
         console.error('[OpenAI] Server error');
       }
     }
-    
     // If OpenAI fails (quota exceeded, etc.), fall back to mock data
     console.log('[Fallback] Using mock playlist data due to OpenAI error');
     const mockResponse = generateMockPlaylist(prompt);
-    const validatedMockTracks = validatePlaylistTracks(mockResponse.tracks, prompt);
+    let validatedMockTracks = validatePlaylistTracks(mockResponse.tracks, prompt);
+    // --- Spotify Album Artwork Enhancement for Mock Data ---
+    if (token) {
+      const enhancedTracks = await Promise.all(validatedMockTracks.map(async (track) => {
+        try {
+          const query = `artist:${track.artist} track:${track.title}`;
+          const resp = await axios.get('https://api.spotify.com/v1/search', {
+            headers: { 'Authorization': `Bearer ${token}` },
+            params: { q: query, type: 'track', limit: 1, market: 'US' }
+          });
+          const items = resp.data.tracks.items;
+          if (items && items.length > 0) {
+            const albumImages = items[0].album.images;
+            return { ...track, albumArtUrl: albumImages[0]?.url || null };
+          }
+        } catch (err) {
+          console.warn(`[Spotify] Failed to fetch artwork for ${track.artist} - ${track.title}`);
+        }
+        return { ...track, albumArtUrl: null };
+      }));
+      validatedMockTracks = enhancedTracks;
+    }
+    // --- End Spotify Enhancement for Mock Data ---
     res.json({
       title: mockResponse.title,
       description: mockResponse.description,

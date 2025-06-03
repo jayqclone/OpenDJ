@@ -16,7 +16,7 @@ const TrackItem: React.FC<TrackItemProps> = ({ track, index }) => {
       
       <div className="flex-shrink-0 w-12 h-12 rounded overflow-hidden bg-dark-200">
         <img 
-          src={track.imageUrl || 'https://images.pexels.com/photos/1021876/pexels-photo-1021876.jpeg?auto=compress&cs=tinysrgb&w=300'}
+          src={track.albumArtUrl || track.imageUrl || 'https://images.pexels.com/photos/1021876/pexels-photo-1021876.jpeg?auto=compress&cs=tinysrgb&w=300'}
           alt={`${track.album} cover`} 
           className="w-full h-full object-cover"
         />

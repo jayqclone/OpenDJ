@@ -6,6 +6,7 @@ export interface Track {
   year: number;
   duration: number; // in seconds
   imageUrl?: string;
+  albumArtUrl?: string;
   spotifyUri?: string;
   appleMusicUrl?: string;
   explanation?: string; // Optional explanation from OpenAI

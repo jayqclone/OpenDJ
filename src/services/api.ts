@@ -10,7 +10,9 @@ const API_BASE_URL = 'https://api.example.com'; // Replace with actual API URL
 // Generate playlist using backend
 export const generatePlaylist = async (prompt: string): Promise<Playlist> => {
   try {
-    const aiResponse = await generatePlaylistWithBackend(prompt);
+    const spotifyToken = getAccessToken() || undefined;
+    console.log('[Frontend] Spotify token:', spotifyToken);
+    const aiResponse = await generatePlaylistWithBackend(prompt, spotifyToken);
     
     // Create base playlist object
     const playlist: Playlist = {
@@ -26,8 +28,7 @@ export const generatePlaylist = async (prompt: string): Promise<Playlist> => {
     };
 
     // If user is authenticated with Spotify, enhance tracks and filter out hallucinations
-    const token = getAccessToken();
-    if (token) {
+    if (spotifyToken) {
       try {
         console.log('[Spotify] User authenticated, enhancing tracks and filtering hallucinations...');
         const enhancedTracks = await searchTracks(playlist.tracks);
@@ -69,7 +70,7 @@ export const generatePlaylist = async (prompt: string): Promise<Playlist> => {
               try {
                 const replacementPrompt = `${prompt}\n\nIMPORTANT: Please generate ${possibleHallucinations.length} additional REAL tracks that exist on Spotify. Avoid fictional or made-up songs. Only include songs that actually exist and can be found on music platforms.`;
                 
-                const replacementResponse = await generatePlaylistWithBackend(replacementPrompt);
+                const replacementResponse = await generatePlaylistWithBackend(replacementPrompt, spotifyToken);
                 const replacementTracks = await searchTracks(replacementResponse.tracks.map((track: any) => ({
                   ...track,
                   id: track.id || `track-${Date.now()}-${Math.random()}`
@@ -115,7 +116,9 @@ export const generatePlaylist = async (prompt: string): Promise<Playlist> => {
 // Refine playlist using backend
 export const refinePlaylist = async (playlistId: string, refinementPrompt: string): Promise<Playlist> => {
   try {
-    const aiResponse = await generatePlaylistWithBackend(refinementPrompt);
+    const spotifyToken = getAccessToken() || undefined;
+    console.log('[Frontend] Spotify token:', spotifyToken);
+    const aiResponse = await generatePlaylistWithBackend(refinementPrompt, spotifyToken);
     
     // Create base playlist object
     const playlist: Playlist = {
@@ -131,8 +134,7 @@ export const refinePlaylist = async (playlistId: string, refinementPrompt: strin
     };
 
     // If user is authenticated with Spotify, enhance tracks and filter out hallucinations
-    const token = getAccessToken();
-    if (token) {
+    if (spotifyToken) {
       try {
         console.log('[Spotify] User authenticated, enhancing refined tracks and filtering hallucinations...');
         const enhancedTracks = await searchTracks(playlist.tracks);
@@ -152,7 +154,7 @@ export const refinePlaylist = async (playlistId: string, refinementPrompt: strin
             try {
               const replacementPrompt = `${refinementPrompt}\n\nIMPORTANT: Please generate ${hallucinatedTracks.length} additional REAL tracks that exist on Spotify. Avoid fictional or made-up songs. Only include songs that actually exist and can be found on music platforms.`;
               
-              const replacementResponse = await generatePlaylistWithBackend(replacementPrompt);
+              const replacementResponse = await generatePlaylistWithBackend(replacementPrompt, spotifyToken);
               const replacementTracks = await searchTracks(replacementResponse.tracks.map((track: any) => ({
                 ...track,
                 id: track.id || `track-${Date.now()}-${Math.random()}`

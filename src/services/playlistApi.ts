@@ -1,8 +1,10 @@
-export const generatePlaylistWithBackend = async (prompt: string) => {
-  const response = await fetch('http://127.0.0.1:5050/api/generate-playlist', {
+const API_BASE_URL = 'http://localhost:5050/api';
+
+export const generatePlaylistWithBackend = async (prompt: string, spotifyToken?: string) => {
+  const response = await fetch(`${API_BASE_URL}/generate-playlist`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ prompt }),
+    body: JSON.stringify({ prompt, token: spotifyToken }),
   });
   if (!response.ok) {
     const error = await response.json();

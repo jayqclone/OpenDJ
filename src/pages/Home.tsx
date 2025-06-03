@@ -16,6 +16,10 @@ const Home: React.FC = () => {
   const { isAuthenticated } = useAuth();
 
   const handlePromptSubmit = async (values: PromptFormValues) => {
+    if (!isAuthenticated && values.platform === 'spotify') {
+      alert('Please log in to Spotify to generate playlists with album artwork.');
+      return;
+    }
     try {
       setError(null);
       setIsGenerating(true);
@@ -90,7 +94,6 @@ const Home: React.FC = () => {
           onExportToSpotify={handleExportToSpotify}
           onRefinementSubmit={handleRefinementSubmit}
           onRegenerate={handleRegenerate}
-          isAuthenticated={isAuthenticated}
           isExporting={isExporting}
           isRefining={isRefining}
           platform={platform}
